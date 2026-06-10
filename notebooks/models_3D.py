@@ -37,7 +37,7 @@ def get_archi_1_3D(input_shape=(model_1_input)):
         layers.GlobalAveragePooling3D(),
         layers.Dense(150, activation='relu'),
         layers.Dense(1, activation='sigmoid'),
-    ], name="archi_1_3D")
+    ], name="3D_archi_1")
     return archi_1_3D
 
 # %%
@@ -70,7 +70,7 @@ def get_archi_2_3D(input_shape=(model_2_input)):
         layers.GlobalAveragePooling3D(),
         layers.Dense(250, activation='relu'),
         layers.Dense(1, activation='sigmoid')
-        ], name="archi_2_3D")
+        ], name="3D_archi_2")
 
     return archi_2_3D
 
@@ -103,5 +103,5 @@ def get_archi_3_3D(input_shape=(model_3_input)):
         layers.GlobalAveragePooling3D(),
         layers.Dense(250, activation='relu'),
         layers.Dense(1, activation='sigmoid'),
-    ], name="archi_3_3D")
+    ], name="3D_archi_3")
     return archi_3_3D

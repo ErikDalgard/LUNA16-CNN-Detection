@@ -49,7 +49,7 @@ def get_archi_1_AE(input_shape=model_1_input):
         #Reconstruction Output Layer
         #Matches original 6 channels. Sigmoid maps pixel intensities between 0 and 1.
         layers.Conv2D(6, kernel_size=(5, 5), activation='sigmoid', padding='same')
-    ], name="archi_1_AE")
+    ], name="AE_archi_1")
     return archi_1_AE
 
 # %%
@@ -94,7 +94,7 @@ def get_archi_2_AE(input_shape=model_2_input):
 
         #Reconstruction Output Layer (Matches original 10 channels)
         layers.Conv2D(10, kernel_size=(5, 5), activation='sigmoid', padding='same')
-    ], name="archi_2_AE")
+    ], name="AE_archi_2")
     return archi_2_AE
 
 # %%
@@ -137,5 +137,5 @@ def get_archi_3_AE(input_shape=model_3_input):
 
         #Reconstruction Output Layer (Matches original 26 channels)
         layers.Conv2D(26, kernel_size=(5, 5), activation='sigmoid', padding='same')
-    ], name="archi_3_AE")
+    ], name="AE_archi_3")
     return archi_3_AE

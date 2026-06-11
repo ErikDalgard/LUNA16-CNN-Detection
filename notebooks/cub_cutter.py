@@ -20,9 +20,7 @@ from torch.utils.data import DataLoader
 # %%
 #dictionary with the sizes, note: our convention is z,y,x thats why the smallest number is first here different to the paper
 SIZES = {
-    "archi1": (6, 20, 20),
-    "archi2": (10, 30, 30),
-    "archi3": (26, 40, 40),  
+    "archi1": (6, 20, 20) 
 }
 
 
@@ -171,6 +169,9 @@ class LunaDatasetTF:
         self._cache_vol = None
 
         self.build_samples()
+        
+    def __len__(self):
+        return len(self.samples)
 
     # -----------------------
     # build dataset index
@@ -215,6 +216,26 @@ class LunaDatasetTF:
             self._cache_vol = data["volume"]
             self._cache_uid = uid
         return self._cache_vol
+    
+    def train_val_test_split(self, train=0.7, val=0.15, test=0.15, seed=0):
+        assert abs(train + val + test - 1.0) < 1e-6
+
+        rng = np.random.default_rng(seed)
+        indices = np.arange(len(self.samples))
+        rng.shuffle(indices)
+
+        n = len(indices)
+        n_train = int(n * train)
+        n_val = int(n * val)
+
+        train_idx = indices[:n_train]
+        val_idx = indices[n_train:n_train + n_val]
+        test_idx = indices[n_train + n_val:]
+
+        return train_idx, val_idx, test_idx
+
+    def set_indices(self, indices):
+        self.active_indices = indices
 
     # -----------------------
     # single sample
@@ -232,48 +253,64 @@ class LunaDatasetTF:
         x = int(row["voxel_x"]) + dx
 
         cubes = []
+
+        # Each size corresponds to a "channel" in Conv2D
         for name, size in SIZES.items():
-            cube = cut_cube(vol, z, y, x, size)
-            cube = np.rot90(cube, k, axes=(1, 2))
+
+            cube = cut_cube(vol, z, y, x, size)      # (Z, Y, X)
+            cube = np.rot90(cube, k, axes=(1, 2))    # rotate in Y-X plane
             cube = normalize(cube)
 
-            cube = np.expand_dims(cube, axis=-1)  # (Z, Y, X, 1)
+            # IMPORTANT:
+            # We DO NOT add channel axis anymore
+            # We keep (Z, Y, X)
+
             cubes.append(cube)
 
-        cubes = np.stack(cubes, axis=0)  # (scales, Z, Y, X, 1)
+        # Stack along "channel dimension"
+        # Result: (Z, Y, X, channels)
+        cubes = np.stack(cubes, axis=-1)
+
+        # Convert from (Z, Y, X, C) → (Y, X, Z*C?) NO
+        # Instead we want (Y, X, Z*C) OR better (Y, X, C_Z)
+
+        # BEST FOR YOUR MODEL (20, 20, 6):
+        # assume single scale and Z=6
+
+        cubes = cubes[:, :, :, 0]  # remove scale axis if only 1 entry in SIZES
+        cubes = np.transpose(cubes, (1, 2, 0))  # (Y, X, Z)
 
         return cubes.astype(np.float32), np.float32(label)
     
 def make_tf_dataset(luna, batch_size=4, shuffle=True):
 
     def gen():
-        for i in range(len(luna.samples)):
+        for i in range(len(luna)):
             yield luna.get_sample(i)
 
-    # infer shapes dynamically (important fix)
-    sample_x, sample_y = luna.get_sample(0)
+    shape = luna.get_sample(0)[0].shape
 
-    output_signature = (
-        tf.TensorSpec(shape=sample_x.shape, dtype=tf.float32),
-        tf.TensorSpec(shape=(), dtype=tf.float32),
+    ds = tf.data.Dataset.from_generator(
+        gen,
+        output_signature=(
+            tf.TensorSpec(shape=shape, dtype=tf.float32),
+            tf.TensorSpec(shape=(), dtype=tf.float32),
+        )
     )
 
-    ds = tf.data.Dataset.from_generator(gen, output_signature=output_signature)
-
     if shuffle:
-        ds = ds.shuffle(512)
+        ds = ds.shuffle(5000)
 
     ds = ds.batch(batch_size)
     ds = ds.prefetch(tf.data.AUTOTUNE)
 
     return ds
-
 # %%
 #ds = LunaDataset(Path(DATA_DIR) / "masked_scans0", neg_ratio=1)
 #loader = DataLoader(ds, batch_size=32, shuffle=False, num_workers=0)
 
 #cubes, labels = next(iter(loader))
-
+luna_dataset = LunaDatasetTF(Path(DATA_DIR) / "masked_scans0", neg_ratio=1)
 ds = make_tf_dataset(luna_dataset)
 batch = next(iter(ds))
 # %%
@@ -309,6 +346,17 @@ def compute_means(dataset, n_augmentations = 108):
 
     return {name: sums[name] / counts[name] for name in SIZES}
 
+
 # %%
-ds = LunaDataset(Path(DATA_DIR) / "masked_scans0", neg_ratio=1)
-MEANS = compute_means(ds)
+luna = LunaDatasetTF(Path(DATA_DIR) / "masked_scans0", neg_ratio=1)
+
+train_idx, val_idx, test_idx = luna.train_val_test_split()
+
+luna.set_indices(train_idx)
+train_ds = make_tf_dataset(luna)
+
+luna.set_indices(val_idx)
+val_ds = make_tf_dataset(luna)
+
+luna.set_indices(test_idx)
+test_ds = make_tf_dataset(luna, shuffle=False)

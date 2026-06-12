@@ -23,6 +23,7 @@ from itertools import product
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from tensorflow import keras
 
 # z, y, x convention (smallest dimension first), one patch size per architecture.
 SIZES = {
@@ -92,8 +93,8 @@ class LunaDataset:
         self.neg = idx[idx["class"] == 0].reset_index(drop=True)
 
         self.rng = np.random.default_rng(seed)
-        self.translations = list(product((-1, 0, 1), repeat=3))   # 27
-        self.rotations = [0, 1, 2, 3]                             # 4 -> 108 augmentations / positive
+        self.translations = [(0,0,0),(1,0,0),(-1,0,0),(0,1,0),(0,-1,0)]  #create 20 new for each positive
+        self.rotations = [0, 1, 2, 3]                           
 
         self._cache_uid = None
         self._cache_vol = None
@@ -224,3 +225,76 @@ def compute_means(dataset, n_augmentations=108):
             counts[name] += cube.size * w
 
     return {name: sums[name] / counts[name] for name in SIZES}
+
+
+
+#NEW LOADING SEQUENCE: Disk → load 64 patches → feed to model → discard → load next 64 patches → .... TALK ABOUT THIS IN PROJECT
+class LunaSequence(keras.utils.Sequence):
+    """
+    Lazy-loading Keras Sequence for LUNA16.
+    Loads one batch at a time — no full-dataset materialization needed.
+        """
+    def __init__(self, luna_dataset, indices, batch_size=64, is_ae=False, shuffle=True):
+        super().__init__(workers=4, use_multiprocessing=False)
+        self.luna        = luna_dataset
+        self.indices     = np.array(indices, dtype=np.int64)
+        self.batch_size  = batch_size
+        self.is_ae       = is_ae
+        self.shuffle     = shuffle
+        self._feat_shape = tuple(luna_dataset.output_signature()[0].shape)
+        self._labels     = None   # populated lazily for class-weight calculation
+
+
+    def __len__(self):
+        return int(np.ceil(len(self.indices) / self.batch_size))
+
+    def __getitem__(self, batch_idx):
+        start = batch_idx * self.batch_size
+        batch = self.indices[start : start + self.batch_size]
+
+        X = np.empty((len(batch), *self._feat_shape), dtype=np.float32)
+        y = np.empty((len(batch), 1),                 dtype=np.float32)
+        for k, i in enumerate(batch):
+            X[k], y[k] = self.luna.get_sample(int(i))
+
+        # For autoencoders the target is the input itself
+        return (X, X) if self.is_ae else (X, y)
+
+    def on_epoch_end(self):
+        if self.shuffle:
+            np.random.shuffle(self.indices)   # randomise order each epoch
+
+    @property
+    def all_labels(self):
+        """
+        Reads labels straight from the sample metadata (no volume I/O).
+        Used only for computing class weights in train_network.
+        """
+        if self._labels is None:
+            self._labels = np.array(
+                [self.luna.samples[int(i)][0] for i in self.indices],
+                dtype=np.float32
+            )
+        return self._labels
+
+def make_sequences(arch, layout, PROJECT_DIR, subset="masked_scans_0-2",
+                   val_fraction=0.2, neg_ratio=1, seed=0,
+                   batch_size=64, is_ae=False):
+
+    subset_dir = Path(PROJECT_DIR) / f"data/{subset}"
+    luna = LunaDataset(subset_dir, neg_ratio=neg_ratio, seed=seed, arch=arch, layout=layout)
+
+    sample_uids = np.array([
+        (luna.pos if label == 1 else luna.neg).iloc[row_i]["seriesuid"]
+        for label, row_i, *_ in luna.samples
+    ])
+    unique  = np.unique(sample_uids)
+    n_val   = max(1, int(round(val_fraction * len(unique))))
+    val_uids = set(np.random.default_rng(seed).choice(unique, size=n_val, replace=False))
+    is_val  = np.array([u in val_uids for u in sample_uids])
+
+    train_seq = LunaSequence(luna, np.where(~is_val)[0], batch_size=batch_size, is_ae=is_ae, shuffle=True)
+    val_seq   = LunaSequence(luna, np.where( is_val)[0], batch_size=batch_size, is_ae=is_ae, shuffle=False)
+
+    print(f"{arch} {layout} — train batches: {len(train_seq)}, val batches: {len(val_seq)}")
+    return train_seq, val_seq

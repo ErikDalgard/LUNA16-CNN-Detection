@@ -29,8 +29,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-
-from cub_cutter import SIZES, cut_cube, normalize
+from cub_cutter_c import SIZES, cut_cube, normalize
 
 LUNA_FP_POINTS = (0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
 
@@ -90,7 +89,7 @@ def predict_candidates(model, subset_dir, arch="archi1", layout="2d",
           .batch(batch_size)
           .prefetch(tf.data.AUTOTUNE))
 
-    probs = np.asarray(model.predict(ds, verbose=0)).reshape(-1)
+    probs = np.asarray(model.predict(ds, verbose=1)).reshape(-1)
     labels = idx["class"].to_numpy().astype(np.int32)
     n_scans = int(idx["seriesuid"].nunique())
 
@@ -198,7 +197,31 @@ def plot_froc(res, ax=None, label=None):
     ax.set_xlabel("false positives per scan")
     ax.set_ylabel("sensitivity")
     ax.set_ylim(0, 1)
-    ax.set_xlim(0.1, 10)
+    ax.set_xlim(0.125, 8)                                       
+    ax.set_xticks([0.125, 0.25, 0.5, 1, 2, 4, 8])               
+    ax.set_xticklabels(["1/8", "1/4", "1/2", "1", "2", "4", "8"]) 
     ax.grid(True, which="both", alpha=0.3)
     ax.legend()
     return ax
+
+
+def froc_table(*named_results):
+    """
+    named_results: tuples of (name, res_dict)
+    e.g. froc_table(("archi1", res1_2D), ("archi2", res2_2D), ("Ensemble", res_ensemble))
+    """
+    fp_points = [0.125, 0.25, 0.5, 1, 2, 4, 8]
+
+    data = {"FP/Scan": ["1/8", "1/4", "1/2", "1", "2", "4", "8"]}
+
+    for name, res in named_results:
+        # sensitivity is already aligned to fp_points from compute_froc
+        data[name] = [f"{s:.3f}" for s in res["sensitivity"]]
+
+    df = pd.DataFrame(data).set_index("FP/Scan")
+
+    # add CPM row at the bottom
+    cpm_row = {name: f"{res['cpm']:.3f}" for name, res in named_results}
+    df.loc["CPM"] = cpm_row
+
+    return df

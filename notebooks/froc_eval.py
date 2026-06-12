@@ -35,14 +35,17 @@ LUNA_FP_POINTS = (0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
 
 
 def _layout_cube(cube, name, layout, means):
-    """Mirror cub_cutter._finalize so eval preprocessing equals training."""
     cube = normalize(cube)
+
     if means is not None:
         cube = cube - np.float32(means[name])
+
+    # ALWAYS convert to (Y, X, Z)
+    cube = np.transpose(cube, (1, 2, 0))
+
     if layout == "3d":
-        cube = cube[..., None]                  # (Z, Y, X, 1)
-    else:
-        cube = np.transpose(cube, (1, 2, 0))    # (Y, X, Z)
+        cube = cube[..., None]   # (Y, X, Z, 1)
+
     return np.ascontiguousarray(cube, dtype=np.float32)
 
 
@@ -66,8 +69,7 @@ def predict_candidates(model, subset_dir, arch="archi1", layout="2d",
 
     size = SIZES[arch]
     dz, dy, dx = size
-    feat_shape = (dz, dy, dx, 1) if layout == "3d" else (dy, dx, dz)
-
+    feat_shape = (dy, dx, dz, 1) if layout == "3d" else (dy, dx, dz)
     cache = {"uid": None, "vol": None}
 
     def get_vol(uid):

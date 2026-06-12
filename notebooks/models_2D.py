@@ -36,6 +36,7 @@ def get_archi_1_2D(input_shape=(model_1_input)):
         #Classification block
         layers.Flatten(),
         layers.Dense(150, activation='relu'),
+        layers.Dropout(0.4),
         layers.Dense(1, activation='sigmoid')
     ], name="2D_archi_1")
     return archi_1_2D
@@ -67,6 +68,7 @@ def get_archi_2_2D(input_shape=(model_2_input)):
         #Classification block
         layers.Flatten(),
         layers.Dense(250, activation='relu'),
+        layers.Dropout(0.4),
         layers.Dense(1, activation='sigmoid')
     ], name="2D_archi_2")
     return archi_2_2D
@@ -100,6 +102,7 @@ def get_archi_3_2D(input_shape=(model_3_input)):
     #Classification block
     layers.Flatten(),
     layers.Dense(250, activation='relu'),
+    layers.Dropout(0.4),
     layers.Dense(1, activation='sigmoid')
     ], name="2D_archi_3")
     return archi_3_2D

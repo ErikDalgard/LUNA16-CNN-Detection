@@ -140,7 +140,9 @@ class LunaDataset:
         if self.means is not None:
             cube = cube - np.float32(self.means[name])
         if self.layout == "3d":
+            cube = np.transpose(cube, (1, 2, 0))  # (Y, X, Z)
             cube = cube[..., None]                  # (Z, Y, X, 1)
+            
         else:
             cube = np.transpose(cube, (1, 2, 0))    # (Y, X, Z), depth as channels
         return np.ascontiguousarray(cube, dtype=np.float32)
@@ -149,10 +151,15 @@ class LunaDataset:
         cube = cut_cube(vol, z, y, x, SIZES[name])
         cube = np.rot90(cube, k, axes=(1, 2))       # rotate in the transverse (y, x) plane
         return self._finalize(cube, name)
-
+    
     def _spec(self, name):
         dz, dy, dx = SIZES[name]
-        shape = (dz, dy, dx, 1) if self.layout == "3d" else (dy, dx, dz)
+
+        if self.layout == "3d":
+            shape = (dy, dx, dz, 1)  
+        else:
+            shape = (dy, dx, dz)
+
         return tf.TensorSpec(shape=shape, dtype=tf.float32)
 
     def output_signature(self):
@@ -162,7 +169,7 @@ class LunaDataset:
             feat = self._spec(self.arch)
         return feat, tf.TensorSpec(shape=(1,), dtype=tf.float32)
 
-    def get_sample(self, i):
+    def get_sample(self, i, augment=True):
         label, row_i, dz, dy, dx, k = self.samples[i]
         row = self.pos.iloc[row_i] if label == 1 else self.neg.iloc[row_i]
         uid = row["seriesuid"]
@@ -227,74 +234,104 @@ def compute_means(dataset, n_augmentations=108):
     return {name: sums[name] / counts[name] for name in SIZES}
 
 
+def training_validation_split(PROJECT_DIR, arch, layout):
+    """Splits the training data into validation and training LundaDatasets. Uses unique UIDs per split and outputs as tf. generators"""
 
-#NEW LOADING SEQUENCE: Disk → load 64 patches → feed to model → discard → load next 64 patches → .... TALK ABOUT THIS IN PROJECT
-class LunaSequence(keras.utils.Sequence):
-    """
-    Lazy-loading Keras Sequence for LUNA16.
-    Loads one batch at a time — no full-dataset materialization needed.
-        """
-    def __init__(self, luna_dataset, indices, batch_size=64, is_ae=False, shuffle=True):
-        super().__init__(workers=4, use_multiprocessing=False)
-        self.luna        = luna_dataset
-        self.indices     = np.array(indices, dtype=np.int64)
-        self.batch_size  = batch_size
-        self.is_ae       = is_ae
-        self.shuffle     = shuffle
-        self._feat_shape = tuple(luna_dataset.output_signature()[0].shape)
-        self._labels     = None   # populated lazily for class-weight calculation
+    data_dir = f"{PROJECT_DIR}/data/masked_scans_0-2"
 
+    ds = LunaDataset(data_dir, arch=arch, layout=layout, neg_ratio=1)
 
-    def __len__(self):
-        return int(np.ceil(len(self.indices) / self.batch_size))
+    sample_uids = []
 
-    def __getitem__(self, batch_idx):
-        start = batch_idx * self.batch_size
-        batch = self.indices[start : start + self.batch_size]
+    for i in range(len(ds.samples)):
+        label = ds.samples[i][0]
+        row_i = ds.samples[i][1]
 
-        X = np.empty((len(batch), *self._feat_shape), dtype=np.float32)
-        y = np.empty((len(batch), 1),                 dtype=np.float32)
-        for k, i in enumerate(batch):
-            X[k], y[k] = self.luna.get_sample(int(i))
+        if label == 1:
+            row = ds.pos.iloc[row_i]
+        else:
+            row = ds.neg.iloc[row_i]
 
-        # For autoencoders the target is the input itself
-        return (X, X) if self.is_ae else (X, y)
+        uid = row["seriesuid"]
+        sample_uids.append(uid)
 
-    def on_epoch_end(self):
-        if self.shuffle:
-            np.random.shuffle(self.indices)   # randomise order each epoch
+    sample_uids = np.array(sample_uids)
 
-    @property
-    def all_labels(self):
-        """
-        Reads labels straight from the sample metadata (no volume I/O).
-        Used only for computing class weights in train_network.
-        """
-        if self._labels is None:
-            self._labels = np.array(
-                [self.luna.samples[int(i)][0] for i in self.indices],
-                dtype=np.float32
-            )
-        return self._labels
+    # -----------------------------
+    # 3. Split by unique UIDs (patient-level split)
+    # -----------------------------
+    unique_uids = np.unique(sample_uids)
 
-def make_sequences(arch, layout, PROJECT_DIR, subset="masked_scans_0-2",
-                   val_fraction=0.2, neg_ratio=1, seed=0,
-                   batch_size=64, is_ae=False):
+    rng = np.random.default_rng(0)
+    rng.shuffle(unique_uids)
 
-    subset_dir = Path(PROJECT_DIR) / f"data/{subset}"
-    luna = LunaDataset(subset_dir, neg_ratio=neg_ratio, seed=seed, arch=arch, layout=layout)
+    val_fraction = 0.2
+    n_val = int(len(unique_uids) * val_fraction)
 
-    sample_uids = np.array([
-        (luna.pos if label == 1 else luna.neg).iloc[row_i]["seriesuid"]
-        for label, row_i, *_ in luna.samples
-    ])
-    unique  = np.unique(sample_uids)
-    n_val   = max(1, int(round(val_fraction * len(unique))))
-    val_uids = set(np.random.default_rng(seed).choice(unique, size=n_val, replace=False))
-    is_val  = np.array([u in val_uids for u in sample_uids])
+    val_uids = set()
+    i = 0
+    while i < n_val:
+        val_uids.add(unique_uids[i])
+        i = i + 1
 
-    train_seq = LunaSequence(luna, np.where(~is_val)[0], batch_size=batch_size, is_ae=is_ae, shuffle=True)
-    val_seq   = LunaSequence(luna, np.where( is_val)[0], batch_size=batch_size, is_ae=is_ae, shuffle=False)
+    # -----------------------------
+    # 4. Build index masks
+    # -----------------------------
+    train_indices = []
+    val_indices = []
 
-    print(f"{arch} {layout} — train batches: {len(train_seq)}, val batches: {len(val_seq)}")
-    return train_seq, val_seq
+    i = 0
+    while i < len(sample_uids):
+        uid = sample_uids[i]
+
+        if uid in val_uids:
+            val_indices.append(i)
+        else:
+            train_indices.append(i)
+
+        i = i + 1
+
+    train_indices = np.array(train_indices)
+    val_indices = np.array(val_indices)
+
+    # -----------------------------
+    # 5. tf.data generators
+    # -----------------------------
+    def train_gen():
+        i = 0
+        while i < len(train_indices):
+            idx = train_indices[i]
+            x, y = ds.get_sample(idx, augment=True)
+            yield x, y
+            i = i + 1
+
+    def val_gen():
+        i = 0
+        while i < len(val_indices):
+            idx = val_indices[i]
+            x, y = ds.get_sample(idx, augment=False)
+            yield x, y
+            i = i + 1
+
+    # -----------------------------
+    # 6. Output signature
+    # -----------------------------
+    output_signature = ds.output_signature()
+
+    # -----------------------------
+    # 7. Build tf.data datasets
+    # -----------------------------
+    train_tfds = tf.data.Dataset.from_generator(
+        train_gen,
+        output_signature=output_signature
+    )
+
+    val_tfds = tf.data.Dataset.from_generator(
+        val_gen,
+        output_signature=output_signature
+    )
+
+    train_tfds = train_tfds.batch(64).prefetch(tf.data.AUTOTUNE)
+    val_tfds = val_tfds.batch(64).prefetch(tf.data.AUTOTUNE)
+
+    return train_tfds, val_tfds

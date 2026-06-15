@@ -40,7 +40,7 @@ def _layout_cube(cube, name, layout, means):
     if means is not None:
         cube = cube - np.float32(means[name])
 
-    # ALWAYS convert to (Y, X, Z)
+    #convert to (Y, X, Z)
     cube = np.transpose(cube, (1, 2, 0))
 
     if layout == "3d":

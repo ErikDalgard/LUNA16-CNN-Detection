@@ -1,22 +1,4 @@
-"""Cube extraction and tf.data input pipeline for the LUNA16 multi-scale FP-reduction project.
 
-Importable, TensorFlow-only, no side effects at import time.
-
-Example:
-    from cub_cutter import LunaDataset, make_tf_dataset, compute_means
-
-    # one architecture, Conv3D input -> batched (B, Z, Y, X, 1)
-    ds   = LunaDataset(subset_dir, arch="archi1", layout="3d", neg_ratio=1)
-    tfds = make_tf_dataset(ds, batch_size=64)
-    model.fit(tfds, validation_data=val_tfds, epochs=50)
-
-    # same data for the 2D models -> batched (B, Y, X, Z) == (B, 20, 20, 6) for archi1
-    ds = LunaDataset(subset_dir, arch="archi1", layout="2d")
-
-    # optional paper-style centering: subtract per-architecture mean after normalization
-    means = compute_means(ds)
-    ds    = LunaDataset(subset_dir, arch="archi1", means=means)
-"""
 from pathlib import Path
 from itertools import product
 
@@ -334,4 +316,4 @@ def training_validation_split(PROJECT_DIR, arch, layout):
     train_tfds = train_tfds.batch(64).prefetch(tf.data.AUTOTUNE)
     val_tfds = val_tfds.batch(64).prefetch(tf.data.AUTOTUNE)
 
-    return train_tfds, val_tfds
+    return train_tfds, val_tfds, train_indices, val_indices

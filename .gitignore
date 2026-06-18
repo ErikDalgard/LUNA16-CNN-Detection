@@ -1,6 +1,16 @@
+# Model weights
+*.keras
+*.h5
+
+# Training outputs
+training_history/
+plots/
+
+# Data
 data/
-.DS_Store
-config.py
+*.npz
+
+# Python
 __pycache__/
 *.pyc
-.vscode/
+.ipynb_checkpoints/

@@ -7,7 +7,6 @@ import pandas as pd
 import tensorflow as tf
 from tensorflow import keras
 
-# z, y, x convention (smallest dimension first), one patch size per architecture.
 SIZES = {
     "archi1": (6, 20, 20),
     "archi2": (10, 30, 30),
@@ -84,8 +83,7 @@ class LunaDataset:
         self.build_samples()
 
     def build_samples(self):
-        # sample tuple: (label, row_index, dz, dy, dx, k_rot)
-        groups = {}   # seriesuid -> samples, kept contiguous for volume-cache locality
+        groups = {}   # seriesuid gives samples, kept contiguous for volume-cache locality
 
         for i in range(len(self.pos)):
             uid = self.pos.iloc[i]["seriesuid"]
@@ -122,7 +120,7 @@ class LunaDataset:
         if self.means is not None:
             cube = cube - np.float32(self.means[name])
         if self.layout == "3d":
-            cube = np.transpose(cube, (1, 2, 0))  # (Y, X, Z)
+            cube = np.transpose(cube, (1, 2, 0))  
             cube = cube[..., None]                  # (Z, Y, X, 1)
             
         else:

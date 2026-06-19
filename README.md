@@ -13,7 +13,7 @@ Below is an overview of the main files and their purposes in this project:
 
 ### Notebooks & Workflow
 * **`preprocessing_compression.ipynb`**: Handles the data preprocessing.
-* ** `cube_cutter_c`**: Cutting out patches/cubes from the compressed data. Normalizes and splits into training and validation sets.
+* **`cube_cutter_c.ipynb`**: Cutting out patches/cubes from the compressed data. Normalizes and splits into training and validation sets.
 * **`train_c.ipynb`**: The main training pipeline. Imports the models, executes the training loop, and runs the evaluation. 
 * **`visualizing_masked_scans.ipynb`**: Used for exploring and visualizing the masked CT scan data examples.
 

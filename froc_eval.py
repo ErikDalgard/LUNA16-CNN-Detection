@@ -1,31 +1,4 @@
-"""LUNA16-style evaluation for the multi-scale FP-reduction model.
-
-Scores every candidate in a held-out subset (e.g. masked_scans3) once, with no
-augmentation and no negative subsampling, then computes the FROC curve and the
-CPM (mean sensitivity at 0.125, 0.25, 0.5, 1, 2, 4, 8 false positives per scan).
-
-Preprocessing (cut, clip, scale, optional mean-centering, layout) is taken from
-cub_cutter, so it MUST be called with the same arch / layout / means used in
-training, or the inputs will not match what the model learned.
-
-Example:
-    from froc_eval import evaluate, plot_froc
-
-    res = evaluate(archi_1_2D, Path(PROJECT_DIR) / "masked_scans3",
-                   arch="archi1", layout="2d", means=None)
-    print("CPM:", res["cpm"])
-    for fp, s in zip(res["fppi"], res["sensitivity"]):
-        print(f"  {fp:>6.3f} FP/scan : sensitivity {s:.4f}")
-    plot_froc(res)                       # optional, needs matplotlib
-
-Candidate-level caveat: candidates_index.csv carries a per-candidate class label
-but no nodule grouping, so sensitivity here is over positive *candidates*, not
-over distinct nodules. The official noduleCADEvaluationLUNA16.py matches
-detections to annotations geometrically and bootstraps confidence intervals;
-bootstrap_cpm below reproduces the scan-level resampling part of that.
-"""
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -160,31 +133,6 @@ def evaluate(model, subset_dir, arch="archi1", layout="2d", means=None,
     res["labels"] = labels
     res["seriesuids"] = idx["seriesuid"].to_numpy()
     return res
-
-
-def bootstrap_cpm(probs, labels, seriesuids, n_bootstrap=1000, seed=0,
-                  fp_points=LUNA_FP_POINTS):
-    """LUNA16-style 95% CI on CPM by resampling scans with replacement."""
-    probs = np.asarray(probs, dtype=float)
-    labels = np.asarray(labels, dtype=int)
-    seriesuids = np.asarray(seriesuids)
-
-    uids = np.unique(seriesuids)
-    by_uid = {u: np.where(seriesuids == u)[0] for u in uids}
-    rng = np.random.default_rng(seed)
-
-    scores = np.empty(n_bootstrap, dtype=float)
-    for b in range(n_bootstrap):
-        picked = rng.choice(uids, size=len(uids), replace=True)
-        rows = np.concatenate([by_uid[u] for u in picked])
-        scores[b] = compute_froc(probs[rows], labels[rows], len(uids),
-                                 fp_points=fp_points)["cpm"]
-    return {
-        "cpm_mean": float(scores.mean()),
-        "ci_low": float(np.percentile(scores, 2.5)),
-        "ci_high": float(np.percentile(scores, 97.5)),
-        "samples": scores,
-    }
 
 
 def plot_froc(res, ax=None, label=None):

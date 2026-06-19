@@ -171,50 +171,6 @@ class LunaDataset:
         return len(self.samples)
 
 
-def make_tf_dataset(luna, batch_size=4, shuffle=True, shuffle_buffer=512):
-    """Wrap a LunaDataset in a batched, prefetched tf.data.Dataset.
-
-    The generator reads samples scan-contiguously so the single-volume cache stays warm;
-    ds.shuffle only reorders the emitted elements, not the read order.
-    """
-    def gen():
-        for i in range(len(luna.samples)):
-            yield luna.get_sample(i)
-
-    ds = tf.data.Dataset.from_generator(gen, output_signature=luna.output_signature())
-    if shuffle:
-        ds = ds.shuffle(shuffle_buffer)
-    ds = ds.batch(batch_size)
-    ds = ds.prefetch(tf.data.AUTOTUNE)
-    return ds
-
-
-def compute_means(dataset, n_augmentations=108):
-    """Per-architecture mean voxel value over unique candidates, positives weighted by
-    n_augmentations (27 translations x 4 rotations) to match the augmented epoch composition."""
-    sums = {name: 0.0 for name in SIZES}
-    counts = {name: 0 for name in SIZES}
-    seen = set()
-
-    for label, row_i, *_ in dataset.samples:
-        key = (label, row_i)
-        if key in seen:
-            continue
-        seen.add(key)
-
-        src = dataset.pos if label == 1 else dataset.neg
-        row = src.iloc[row_i]
-        vol = dataset._get_volume(row["seriesuid"])
-        z, y, x = int(row["voxel_z"]), int(row["voxel_y"]), int(row["voxel_x"])
-
-        w = n_augmentations if label == 1 else 1
-        for name, size in SIZES.items():
-            cube = normalize(cut_cube(vol, z, y, x, size))
-            sums[name] += float(cube.sum()) * w
-            counts[name] += cube.size * w
-
-    return {name: sums[name] / counts[name] for name in SIZES}
-
 
 def training_validation_split(PROJECT_DIR, arch, layout):
     """Splits the training data into validation and training LundaDatasets. Uses unique UIDs per split and outputs as tf. generators"""
@@ -239,9 +195,7 @@ def training_validation_split(PROJECT_DIR, arch, layout):
 
     sample_uids = np.array(sample_uids)
 
-    # -----------------------------
-    # 3. Split by unique UIDs (patient-level split)
-    # -----------------------------
+    #Split by unique UIDs (patient-level split)
     unique_uids = np.unique(sample_uids)
 
     rng = np.random.default_rng(0)
@@ -256,9 +210,7 @@ def training_validation_split(PROJECT_DIR, arch, layout):
         val_uids.add(unique_uids[i])
         i = i + 1
 
-    # -----------------------------
-    # 4. Build index masks
-    # -----------------------------
+    #Build index masks
     train_indices = []
     val_indices = []
 
@@ -276,9 +228,7 @@ def training_validation_split(PROJECT_DIR, arch, layout):
     train_indices = np.array(train_indices)
     val_indices = np.array(val_indices)
 
-    # -----------------------------
-    # 5. tf.data generators
-    # -----------------------------
+    #tf.data generators
     def train_gen():
         i = 0
         while i < len(train_indices):
@@ -295,14 +245,10 @@ def training_validation_split(PROJECT_DIR, arch, layout):
             yield x, y
             i = i + 1
 
-    # -----------------------------
-    # 6. Output signature
-    # -----------------------------
+    #Output signature
     output_signature = ds.output_signature()
 
-    # -----------------------------
-    # 7. Build tf.data datasets
-    # -----------------------------
+    #Build tf.data datasets
     train_tfds = tf.data.Dataset.from_generator(
         train_gen,
         output_signature=output_signature
